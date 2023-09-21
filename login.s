@@ -1,6 +1,7 @@
 * login - sign on
 *
 * Itagaki Fumihiko 25-Aug-91  Create.
+* Itagaki Fumihiko 15-May-92  Set arg0 as -shell[logname]
 *
 * Usage: login [ -p ] [ name [ env-var ... ] ]
 
@@ -12,20 +13,23 @@
 .xref DecodeHUPAIR
 .xref minmaxul
 .xref iscntrl
+.xref isspace2
+.xref itoa
 .xref utoa
 .xref strlen
 .xref strchr
 .xref strspc
 .xref strcmp
-.xref memcmp
-.xref strcpy
+.xref stpcpy
 .xref strmove
-.xref memmovi
-.xref memset
 .xref strfor1
 .xref strazbot
+.xref memcmp
+.xref memset
+.xref memmovi
 .xref skip_space
 .xref cat_pathname
+.xref headtail
 .xref getenv
 .xref setenv
 .xref getcwd
@@ -460,7 +464,14 @@ chdir_ok:
 		beq	make_default_shell
 
 		movea.l	a0,a1
-		bsr	strspc
+find_shellname_bottom_loop:
+		move.b	(a0)+,d0
+		beq	find_shellname_bottom_done
+
+		jsr	isspace2
+		bne	find_shellname_bottom_loop
+find_shellname_bottom_done:
+		subq.l	#1,a0
 		move.l	a0,d0
 		sub.l	a1,d0
 		cmp.l	#MAXPATH,d0
@@ -481,16 +492,32 @@ make_default_shell:
 
 		lea	default_parameter(pc),a0
 shell_ok:
+		movea.l	a0,a2				*  A2 : parameter
 		bsr	strlen
-		cmp.l	#252,d0
+		move.l	d0,d1				*  D1 : length of parameter
+		lea	shell_pathname(pc),a0
+		bsr	headtail			*  A1 : basename of shell
+		bsr	strlen
+		add.l	d1,d0
+		move.l	d0,-(a7)
+		movea.l	pwd_buf+PW_NAME(a6),a0
+		bsr	strlen
+		add.l	(a7)+,d0
+		cmp.l	#255-5,d0		*  parameter<\0><->shell<[>logname<]><\0>
 		bhi	too_long_parameter
 
-		movea.l	a0,a1
 		lea	parameter(pc),a0
-		move.b	d0,(a0)+
+		exg	a1,a2				*  A1 : parameter
+		move.b	d1,(a0)+
 		bsr	strmove
-		lea	shell_arg0(pc),a1
-		bsr	strcpy
+		move.b	#'-',(a0)+
+		exg	a1,a2				*  A1 : shell
+		bsr	stpcpy
+		move.b	#'[',(a0)+
+		movea.l	pwd_buf+PW_NAME(a6),a1		*  A1 : logname
+		bsr	stpcpy
+		move.b	#']',(a0)+
+		clr.b	(a0)
 	*
 	*  ユーザの環境を作成する
 	*
@@ -567,7 +594,17 @@ dupenv_next:
 dupenv_done:
 		clr.b	(a2)
 		*
-		*  LOGNAME, USER, HOME, SHELL をセットする
+		*  UID, GID, LOGNAME, USER, HOME, SHELL をセットする
+		*
+		move.l	pwd_buf+PW_UID(a6),d0
+		lea	word_UID(pc),a1
+		bsr	setenv_num
+		bne	insufficient_memory
+		*
+		move.l	pwd_buf+PW_GID(a6),d0
+		lea	word_GID(pc),a1
+		bsr	setenv_num
+		bne	insufficient_memory
 		*
 		movea.l	pwd_buf+PW_NAME(a6),a1
 		lea	word_LOGNAME(pc),a0
@@ -677,12 +714,12 @@ motd_done:
 		bra	exec
 
 
-too_long_shell:
-		lea	msg_too_long_shell(pc),a0
-		bra	werror_leave_0
-
 too_long_parameter:
 		lea	msg_too_long_parameter(pc),a0
+		bra	werror_leave_0
+
+too_long_shell:
+		lea	msg_too_long_shell(pc),a0
 werror_leave_0:
 		bsr	werror
 		bra	leave_0
@@ -699,6 +736,13 @@ werror_leave_1:
 leave_1:
 		moveq	#1,d0
 		bra	leave
+*****************************************************************
+setenv_num:
+		lea	lbuf(a6),a0
+		moveq	#0,d1
+		bsr	itoa
+		exg	a0,a1
+		bra	setenv
 *****************************************************************
 check_nologin:
 		lea	file_nologin(pc),a2
@@ -909,13 +953,16 @@ envcmp_return:
 .data
 
 	dc.b	0
-	dc.b	'## login 0.4 ##  Copyright(C)1991 by Itagaki Fumihiko',0
+	dc.b	'## login 0.5 ##  Copyright(C)1991-92 by Itagaki Fumihiko',0
 
+word_GID:			dc.b	'GID',0
 word_HOME:			dc.b	'HOME',0
 word_LOGNAME:			dc.b	'LOGNAME',0
 word_SHELL:			dc.b	'SHELL',0
+word_UID:			dc.b	'UID',0
 word_USER:			dc.b	'USER',0
 word_SYSROOT:			dc.b	'SYSROOT',0
+
 msg_invalid_sysroot:		dc.b	'login: Invalid $SYSROOT directory',CR,LF,0
 msg_not_a_tty:			dc.b	'login: Input is not character device.',CR,LF,0
 msg_insufficient_memory:	dc.b	'login: Insufficient memory.',CR,LF,0
@@ -939,7 +986,6 @@ percent_hushlogin:		dc.b	'%hushlogin',0
 
 salt_xx:			dc.b	'xx',0
 str_p:				dc.b	'-p',0
-shell_arg0:			dc.b	'-'
 default_parameter:
 str_nul:			dc.b	0
 *****************************************************************

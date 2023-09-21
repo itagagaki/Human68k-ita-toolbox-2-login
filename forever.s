@@ -1,6 +1,7 @@
 * forever - respawn command forever
 *
 * Itagaki Fumihiko 07-Apr-92  Create.
+* Itagaki Fumihiko 14-May-92  Debug.
 *
 * Usage: forever command [ args ... ]
 
@@ -115,14 +116,18 @@ forever_spawn:
 	*  環境を複製する
 	*
 		movea.l	forever_envp,a1
+		moveq	#1,d2
+		cmpa.l	#-1,a1
+		beq	dupenv_1
+
 		addq.l	#4,a1
 		movea.l	a1,a0
 		bsr	strazbot
 		move.l	a0,d2
-		addq.l	#1,d2
-		sub.l	a1,d2				*  D2.L : 環境本体のバイト数
+		sub.l	a1,d2				*  D2.L : 環境本体のバイト数-1
+dupenv_1:
 		move.l	d2,d1
-		addq.l	#5,d1
+		addq.l	#4+1+1,d1			*  +4:先頭のsize field，+1:末尾のNUL
 		bclr	#0,d1				*  D1.L : 環境エリアのサイズ
 		move.l	d1,-(a7)
 		DOS	_MALLOC
@@ -133,8 +138,13 @@ forever_spawn:
 		move.l	d0,command_envp
 		movea.l	d0,a0
 		move.l	d1,(a0)+
+		cmpa.l	#-1,a1
+		beq	dupenv_2
+
 		move.l	d2,d0
 		bsr	memmovi
+dupenv_2:
+		clr.b	(a0)
 	*
 	*  コマンドをspawnする
 	*
@@ -231,7 +241,7 @@ werror_count:
 .data
 
 	dc.b	0
-	dc.b	'## forever 0.0 ##  Copyright(C)1992 by Itagaki Fumihiko',0
+	dc.b	'## forever 0.1 ##  Copyright(C)1992 by Itagaki Fumihiko',0
 
 msg_usage:			dc.b	'Usage: forever command args ...',CR,LF,0
 msg_insufficient_memory:	dc.b	'forever: Insufficient memory.',CR,LF,0

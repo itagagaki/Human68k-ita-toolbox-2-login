@@ -35,7 +35,7 @@ LOGIN(1)       Human68k ITA TOOLBOX User's Manual        LOGIN(1)
 
      のように記述することで実現できます．
 
-     login は SYSROOT の設定を厳密にはチェックしません．SYSROOT
+     login は SYSROOT の設定を厳格にチェックはしません．SYSROOT
      の値（SYSROOT が未定義なら空文字列とする）をもって DOSファン
      クション chdir を呼び，それがエラーとならないことを確認する
      のみです．しかしながら，SYSROOT にはディレクトリの完全パス名
@@ -88,6 +88,8 @@ LOGIN(1)       Human68k ITA TOOLBOX User's Manual        LOGIN(1)
      ユーザの（ログイン・シェル・プログラムに渡される）環境変数は，
      login によって以下のように初期設定されます．
 
+          UID=ユーザのユーザID
+          GID=ユーザのグループID
           LOGNAME=ユーザ名（ログイン名）
           USER=ユーザ名（ログイン名）
           HOME=ユーザのホーム・ディレクトリのパス名
@@ -113,6 +115,11 @@ LOGIN(1)       Human68k ITA TOOLBOX User's Manual        LOGIN(1)
      ユーザのシェルに渡される環境エリアの大きさはすべての変数がちょ
      うど収まる大きさに切り詰められています．
 
+     ユーザのシェルが引数を HUPAIR に従って解釈することを前提とし，
+     引数0には‘-<shell>[<logname>]’が与えられます．ここで
+     <shell> はシェルのパス名からドライブとディレクトリ名を取り除
+     いた名前，<logname> はユーザのログイン名です．
+
 環境変数
      SYSROOT        システムのルート・ディレクトリ
 
@@ -135,7 +142,7 @@ LOGIN(1)       Human68k ITA TOOLBOX User's Manual        LOGIN(1)
 
 
 
-0.4                 Last change: 21 Apr 1992     Itagaki Fumihiko
+0.5                 Last change: 14 Jun 1992     Itagaki Fumihiko
 
 
 
