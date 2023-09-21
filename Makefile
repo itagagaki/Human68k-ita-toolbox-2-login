@@ -1,28 +1,27 @@
-#! A:/bin/MAKE.X -f
-# Makefile for LOGIN
+# Makefile for ITA TOOLBOX #2 LOGIN
 
-AS	= \usr\pds\HAS.X -l -i $(INCLUDE)
-LK	= \usr\pds\hlk.x -x
-CV      = -\bin\CV.X -r
-INSTALL = copy
-BACKUP  = A:\bin\COPYALL.X -t
-CP      = copy
-RM      = -\usr\local\bin\rm -f
+AS	= HAS.X -i $(INCLUDE)
+LK	= hlk.x -x
+CV      = -CV.X -r
+CP      = cp
+RM      = -rm -f
 
-INCLUDE = ../fish/include
+INCLUDE = $(HOME)/fish/include
 
-DESTDIR   = A:\bin
-BACKUPDIR = B:\login\0.5
+DESTDIR   = A:/bin
+BACKUPDIR = B:/login/0.6
+RELEASE_ARCHIVE = LOGIN06
+RELEASE_FILES = MANIFEST README ../NOTICE CHANGES login.1 login.x forever.1 forever.x passwd.5
 
 EXTLIB = $(HOME)/fish/lib/ita.l
 
 ###
 
-PROGRAMS = login.x forever.x
+PROGRAM = login.x forever.x
 
 ###
 
-.PHONY: all clean clobber install backup
+.PHONY: all clean clobber install release backup
 
 .TERMINAL: *.h *.s
 
@@ -32,7 +31,7 @@ PROGRAMS = login.x forever.x
 
 ###
 
-all:: $(PROGRAMS)
+all:: $(PROGRAM)
 
 clean::
 
@@ -41,15 +40,8 @@ clobber:: clean
 
 ###
 
-$(PROGRAMS) : $(INCLUDE)/doscall.h $(INCLUDE)/chrcode.h $(EXTLIB)
+$(PROGRAM) : $(INCLUDE)/doscall.h $(INCLUDE)/chrcode.h $(EXTLIB)
 
-install::
-	$(INSTALL) login.x $(DESTDIR)
-
-backup::
-	$(BACKUP) *.* $(BACKUPDIR)
-
-clean::
-	$(RM) $(PROGRAMS)
+include ../Makefile.sub
 
 ###

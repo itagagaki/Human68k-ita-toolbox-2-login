@@ -1,7 +1,6 @@
 MANIFEST       このファイル
 README         まず最初にお読み下さい
 NOTICE         版権と許諾についての告示書
-DIRECTORY      ITA製品リスト
 CHANGES        LOGINのモデルチェンジの履歴
 login.1        LOGINのマニュアル
 login.x        LOGIN実行ファイル

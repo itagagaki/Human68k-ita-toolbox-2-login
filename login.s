@@ -2,6 +2,16 @@
 *
 * Itagaki Fumihiko 25-Aug-91  Create.
 * Itagaki Fumihiko 15-May-92  Set arg0 as -shell[logname]
+* 0.5
+* Itagaki Fumihiko 25-Dec-94  BSSがきちんと確保されていなかったのを修正
+* Itagaki Fumihiko 25-Dec-94  ログイン名入力時, 8文字を超える分はエコーバックしない
+* Itagaki Fumihiko 25-Dec-94  ログイン名入力時, ^Hと^?をdelete文字として処理
+* Itagaki Fumihiko 25-Dec-94  ログイン名入力時, ^Uは改行しない
+* Itagaki Fumihiko 26-Dec-94  ログイン名入力時, ^Wをwerase文字として処理
+* Itagaki Fumihiko 26-Dec-94  ログイン名入力時, ^Rをredraw文字として処理
+* Itagaki Fumihiko 26-Dec-94  ログイン名入力時, ^Zは通常の文字として処理
+* Itagaki Fumihiko 27-Dec-94  パスワード入力時, ^Hと^?をerase文字, ^Wをwerase文字, ^Uをkill文字として処理
+* 0.6
 *
 * Usage: login [ -p ] [ name [ env-var ... ] ]
 
@@ -46,7 +56,7 @@
 MAXLOGNAME	equ	8
 MAXPASSWD	equ	8
 
-STACKSIZE	equ	512
+STACKSIZE	equ	2048
 
 .text
 .even
@@ -216,7 +226,7 @@ start2:
 	*
 		DOS	_GETPDB
 		movea.l	d0,a0				*  A0 : PDBアドレス
-		lea	initial_bottom(a6),a1
+		lea	initial_bottom(pc),a1
 		suba.l	a0,a1
 		move.l	a1,-(a7)
 		move.l	a0,-(a7)
@@ -349,7 +359,6 @@ ask_logname:
 		lea	logname(a6),a0
 		moveq	#8,d0
 		bsr	getname
-		bmi	leave_0
 check_logname:
 	*
 	*  ログイン名をチェックする
@@ -807,24 +816,21 @@ xfclose:
 *      CCR    TST.L D0
 ****************************************************************
 getname:
-		movem.l	d1-d2/a0-a2,-(a7)
+		movem.l	d1-d3/a0-a2,-(a7)
 		move.l	d0,d2
 getname_restart:
 		exg	a0,a1
 		bsr	print
 		exg	a0,a1
-		moveq	#0,d1
+		moveq	#0,d1				*  D1.L : 入力文字数
 		movea.l	a0,a2
 getname_loop:
 		DOS	_INKEY
 		tst.l	d0
-		bmi	getname_eof
+		bmi	leave_0
 
-		cmp.b	#EOT,d0
-		beq	getname_eof
-
-		cmp.b	#$04,d0				*  $04 == ^D : EOF
-		beq	getname_eof
+		cmp.b	#$04,d0				*  $04 == ^D
+		beq	leave_0
 
 		cmp.b	#CR,d0
 		beq	getname_done
@@ -832,48 +838,123 @@ getname_loop:
 		cmp.b	#LF,d0
 		beq	getname_done
 
-		move.w	d0,-(a7)
-		move.w	d0,-(a7)
-		bsr	iscntrl
-		bne	getname_echo
+		cmp.b	#BS,d0
+		beq	getname_erase
 
-		add.b	#$40,d0
-		and.b	#$7f,d0
-		move.w	d0,(a7)
-		moveq	#'^',d0
-		bsr	putchar
-getname_echo:
-		move.w	(a7)+,d0
-		bsr	putchar
-		move.w	(a7)+,d0
+		cmp.b	#$7f,d0				*  $7f == ^?
+		beq	getname_erase
 
-		cmp.b	#$03,d0				*  $03 == ^C : Interrupt
-		beq	getname_cancel
+		cmp.b	#$17,d0				*  $17 == ^W
+		beq	getname_werase
 
-		cmp.b	#$15,d0				*  $15 == ^U : Kill
-		beq	getname_cancel
+		cmp.b	#$15,d0				*  $15 == ^U
+		beq	getname_kill
+
+		cmp.b	#$03,d0				*  $03 == ^C
+		beq	getname_interrupt
+
+		cmp.b	#$12,d0				*  $13 == ^R
+		beq	getname_redraw
 
 		cmp.l	d2,d1
 		bhs	getname_loop
 
+		bsr	echochar
 		move.b	d0,(a2)+
 		addq.l	#1,d1
 		bra	getname_loop
 
-getname_cancel:
+getname_redraw:
 		bsr	put_newline
-		bra	getname_restart
+		move.l	d1,d3
+		suba.l	d1,a2
+getname_redraw_loop:
+		subq.l	#1,d3
+		bcs	getname_loop
 
-getname_eof:
-		moveq	#-1,d0
-		bra	getname_return
+		move.b	(a2)+,d0
+		bsr	echochar
+		bra	getname_redraw_loop
+
+getname_erase:
+		tst.l	d1
+		beq	getname_loop
+
+		bsr	getname_erase_sub
+		bra	getname_loop
+
+getname_werase:
+		tst.l	d1
+		beq	getname_loop
+
+		bsr	getname_erase_sub
+		move.b	(a2),d0
+		bsr	isspace2
+		beq	getname_werase
+getname_werase_2:
+		tst.l	d1
+		beq	getname_loop
+
+		move.b	-1(a2),d0
+		bsr	isspace2
+		beq	getname_loop
+		bsr	getname_erase_sub
+		bra	getname_werase_2
+
+getname_kill:
+		tst.l	d1
+		beq	getname_loop
+
+		bsr	getname_erase_sub
+		bra	getname_kill
 
 getname_done:
 		bsr	put_newline
 		clr.b	(a2)
 		move.l	d1,d0
 getname_return:
-		movem.l	(a7)+,d1-d2/a0-a2
+		movem.l	(a7)+,d1-d3/a0-a2
+getname_erase_sub_return:
+		rts
+
+getname_interrupt:
+		bsr	echochar
+		move.w	#$200,d0
+		bra	leave
+
+getname_erase_sub:
+		subq.l	#1,d1
+		bsr	put_backspace
+		move.b	-(a2),d0
+		bsr	iscntrl
+		bne	getname_erase_sub_return
+put_backspace:
+		moveq	#BS,d0
+		bsr	putchar
+		moveq	#' ',d0
+		bsr	putchar
+		moveq	#BS,d0
+putchar:
+		move.w	d0,-(a7)
+		DOS	_PUTCHAR
+		addq.l	#2,a7
+		rts
+*****************************************************************
+echochar:
+		move.w	d0,-(a7)
+		move.w	d0,-(a7)
+		bsr	iscntrl
+		bne	echochar_1
+
+		add.b	#$40,d0
+		and.b	#$7f,d0
+		move.w	d0,(a7)
+		moveq	#'^',d0
+		bsr	putchar
+echochar_1:
+		move.w	(a7)+,d0
+		bsr	putchar
+		move.w	(a7)+,d0
 		rts
 *****************************************************************
 put_newline:
@@ -896,12 +977,6 @@ print:
 		move.l	a0,-(a7)
 		DOS	_PRINT
 		addq.l	#4,a7
-		rts
-*****************************************************************
-putchar:
-		move.w	d0,-(a7)
-		DOS	_PUTCHAR
-		addq.l	#2,a7
 		rts
 *****************************************************************
 make_sys_pathname:
@@ -953,7 +1028,7 @@ envcmp_return:
 .data
 
 	dc.b	0
-	dc.b	'## login 0.5 ##  Copyright(C)1991-92 by Itagaki Fumihiko',0
+	dc.b	'## login 0.6 ##  Copyright(C)1991-94 by Itagaki Fumihiko',0
 
 word_GID:			dc.b	'GID',0
 word_HOME:			dc.b	'HOME',0
@@ -992,6 +1067,7 @@ str_nul:			dc.b	0
 .bss
 .even
 bsstop:
+
 .offset 0
 sysroot:	ds.l	1
 login_envp:	ds.l	1
@@ -1013,6 +1089,11 @@ protect_env:	ds.b	1
 		ds.b	STACKSIZE
 .even
 stack_bottom:
+
+.bss
+		ds.b	stack_bottom
+
 initial_bottom:
 *****************************************************************
+
 .end start

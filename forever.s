@@ -2,6 +2,9 @@
 *
 * Itagaki Fumihiko 07-Apr-92  Create.
 * Itagaki Fumihiko 14-May-92  Debug.
+* 0.1
+* Itagaki Fumihiko 27-Dec-94  re-link
+* 0.2
 *
 * Usage: forever command [ args ... ]
 
@@ -241,7 +244,7 @@ werror_count:
 .data
 
 	dc.b	0
-	dc.b	'## forever 0.1 ##  Copyright(C)1992 by Itagaki Fumihiko',0
+	dc.b	'## forever 0.2 ##  Copyright(C)1992-94 by Itagaki Fumihiko',0
 
 msg_usage:			dc.b	'Usage: forever command args ...',CR,LF,0
 msg_insufficient_memory:	dc.b	'forever: Insufficient memory.',CR,LF,0
