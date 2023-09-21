@@ -10,9 +10,8 @@
 .include pwd.h
 
 .xref DecodeHUPAIR
-.xref isdigit
-.xref islower
-.xref isspace
+.xref minmaxul
+.xref iscntrl
 .xref utoa
 .xref strlen
 .xref strchr
@@ -22,6 +21,7 @@
 .xref strcpy
 .xref strmove
 .xref memmovi
+.xref memset
 .xref strfor1
 .xref strazbot
 .xref skip_space
@@ -32,67 +32,246 @@
 .xref tfopen
 .xref fclose
 .xref fgetc
-.xref chdir
+.xref drvchkp
 .xref getpass
 .xref fgetpwnam
-
-** 固定定数
-PDB_ProcessFlag	equ	$50
+.xref crypt
+.xref csleep
 
 ** 可変定数
-MAXLOGNAME	equ	64				*  255以下
-MAXPASSWD	equ	64				*  65535以下
+MAXLOGNAME	equ	8
+MAXPASSWD	equ	8
 
 STACKSIZE	equ	512
 
 .text
-
+.even
 start:
 		bra.s	start1
 		dc.b	'#HUPAIR',0			*  HUPAIR適合宣言
-		dc.b	'login',0			*  loginコマンド宣言
+.even
 start1:
-		move.l	8(a0),a5			*  A5 := 与えられたメモリの底
+		bra	start2
+*****************************************************************
+.even
+
+mainjmp:	ds.l	1
+mainstack:	ds.l	1
+user_envp:	ds.l	1
+
+		ds.b	32
+exec_stack_bottom:
+
+shell_pathname:	ds.b	MAXPATH+1
+
+.even
+		dc.b	'#HUPAIR',0			*  HUPAIRコマンドライン・マーク
+parameter:	ds.b	1+255+1
+
+login_wd:	ds.b	MAXHEAD+1
+in_me:		ds.b	1
+*****************************************************************
+.even
+exec:
+		DOS	_GETPDB
+		movea.l	d0,a0				*  A0 : PDBアドレス
+		lea	core_bottom(pc),a1
+		suba.l	a0,a1
+		move.l	a1,-(a7)
+		move.l	a0,-(a7)
+		DOS	_SETBLOCK
+		addq.l	#8,a7
+
+		sf	in_me
+		DOS	_EXEC
+		st	in_me
+		lea	14(a7),a7
+		tst.l	d0
+		bmi	unable_exec
+leave:
+		move.w	d0,-(a7)
+		lea	login_wd(pc),a0
+		bsr	chdir
+		move.w	(a7)+,d0
+do_exit:
+		move.w	d0,-(a7)
+		DOS	_EXIT2
+
+unable_exec:
+		lea	shell_pathname(pc),a0
+		lea	msg_unable_to_execute(pc),a1
+		bsr	werror2
+leave_0:
+		moveq	#0,d0
+		bra	leave
+
+msg_unable_to_execute:		dc.b	'Unable to execute',0
+*****************************************************************
+.even
+manage_abort_signal:
+		move.l	#$3fc,d0		* D0 = 000003FC
+		cmp.w	#$100,d1
+		bcs	manage_signals
+
+		addq.l	#1,d0			* D0 = 000003FD
+		cmp.w	#$200,d1
+		bcs	manage_signals
+
+		addq.l	#2,d0			* D0 = 000003FF
+		cmp.w	#$ff00,d1
+		bcc	manage_signals
+
+		cmp.w	#$f000,d1
+		bcc	manage_signals
+
+		move.b	d1,d0
+		bra	manage_signals
+
+manage_interrupt_signal:
+		move.l	#$200,d0		* D0 = 00000200
+manage_signals:
+		tst.b	in_me
+		beq	do_exit
+
+		move.l	mainstack,a7
+		move.l	mainjmp,a0
+		jmp	(a0)
+****************************************************************
+* chdir - change current working directory and/or drive.
+*
+* CALL
+*      A0     string point
+*
+* RETURN
+*      D0.L   DOS status code
+*      CCR    TST.L D0
+*****************************************************************
+chdir:
+		move.l	a0,-(a7)
+		DOS	_CHDIR
+		addq.l	#4,a7
+		tst.l	d0
+		bmi	chdir_return
+
+		moveq	#0,d0
+		move.b	(a0),d0
+		cmp.b	#'a',d0
+		blo	chdir_1
+
+		cmp.b	#'z',d0
+		bhi	chdir_1
+
+		sub.b	#$20,d0
+chdir_1:
+		sub.b	#'A',d0
+		move.w	d0,-(a7)
+		DOS	_CHGDRV
+		addq.l	#2,a7
+		tst.l	d0
+chdir_return:
+		rts
+*****************************************************************
+werror2:
+		move.l	a0,-(a7)
+		movea.l	a1,a0
+		bsr	werror
+		lea	msg_space_quote(pc),a0
+		bsr	werror
+		move.l	(a7)+,a0
+		bsr	werror
+		lea	msg_quote_crlf(pc),a0
+werror:
+		move.l	a1,-(a7)
+		movea.l	a0,a1
+werror_count:
+		tst.b	(a1)+
+		bne	werror_count
+
+		subq.l	#1,a1
+		suba.l	a0,a1
+		move.l	a1,-(a7)
+		move.l	a0,-(a7)
+		move.w	#2,-(a7)
+		DOS	_WRITE
+		lea	10(a7),a7
+		movea.l	(a7)+,a1
+		rts
+
+msg_space_quote:		dc.b	' "',0
+msg_quote_crlf:			dc.b	'"',CR,LF,0
+
+.even
+core_bottom:
+*****************************************************************
+start2:
 		lea	bsstop(pc),a6			*  A6 := BSSの先頭アドレス
 		lea	stack_bottom(a6),a7		*  A7 := スタックの底
 		move.l	a3,login_envp(a6)		*  環境のアドレスを記憶する
-		clr.l	user_envp(a6)
+	*
+	*  占有メモリを切り詰める
+	*
+		DOS	_GETPDB
+		movea.l	d0,a0				*  A0 : PDBアドレス
+		lea	initial_bottom(a6),a1
+		suba.l	a0,a1
+		move.l	a1,-(a7)
+		move.l	a0,-(a7)
+		DOS	_SETBLOCK
+		addq.l	#8,a7
 	*
 	*  login自身のカレント・ディレクトリを保存する
 	*
-		lea	login_cwd(a6),a0
+		lea	login_wd(pc),a0
 		bsr	getcwd
 	*
-	*  $SYSROOT/etc/nologin があればexitする
+	*  環境変数 SYSROOT に chdir し，そこをデフォルトのディレクトリとする
 	*
-		lea	file_nologin(pc),a1
-		bsr	open_sysfile
-		bpl	nologin
+		lea	str_nul(pc),a1
+		lea	word_SYSROOT(pc),a0
+		bsr	getenv
+		beq	sysroot_ok
+
+		movea.l	d0,a1
+sysroot_ok:
+		move.l	a1,sysroot(a6)
+		movea.l	a1,a0
+		bsr	drvchkp
+		bmi	invalid_sysroot
+
+		bsr	chdir
+		bmi	invalid_sysroot
+
+		lea	defaultdir(a6),a0
+		bsr	getcwd
 	*
 	*  標準入力が端末かどうかをチェックする
 	*
 		clr.l	-(a7)
 		DOS	_IOCTRL
 		addq.l	#4,a7
-		and.b	#%10100000,d0			*  CHR, RAW
-		cmp.b	#%10000000,d0			*  CHR && (!RAW (COOKED))
-		bne	not_a_tty
+		lea	msg_not_a_tty(pc),a0
+		btst	#7,d0				*  character=1/block=0
+		beq	werror_leave_1
 	*
 	*  引数をデコードし，解釈する
 	*
 		sf	protect_env(a6)
-		clr.b	logname+2(a6)
+		clr.b	logname(a6)
 
-		lea	envarg_top(a6),a1	*  A1 := 引数並びを格納するエリアの先頭アドレス
-		lea	1(a2),a0		*  A0 := コマンドラインの文字列の先頭アドレス
-		bsr	strlen			*  D0.L に A0 が示す文字列の長さを求め，
-		add.l	a1,d0			*    格納エリアの容量を
-		cmp.l	a5,d0			*    チェックする
-		bhs	insufficient_memory_for_me
+		lea	1(a2),a0			*  A0 := コマンドラインの文字列の先頭アドレス
+		bsr	strlen				*  D0.L := コマンドラインの文字列の長さ
+		addq.l	#1,d0
+		move.l	d0,-(a7)
+		DOS	_MALLOC
+		addq.l	#4,a7
+		tst.l	d0
+		bmi	insufficient_memory
 
-		bsr	DecodeHUPAIR			*  デコードする
-		movea.l	a1,a0
-		move.w	d0,argc(a6)
+		move.l	d0,args(a6)
+		movea.l	d0,a1				*  A1 := 引数並び格納エリアの先頭アドレス
+		bsr	DecodeHUPAIR			*  引数をデコードする
+		movea.l	a1,a0				*  A0 : 引数ポインタ
+		move.l	d0,d2				*  D2.L : 引数カウンタ
 		beq	parse_arg_done
 
 		lea	str_p(pc),a1
@@ -101,153 +280,116 @@ start1:
 
 		st	protect_env(a6)
 		bsr	strfor1
-		subq.w	#1,argc(a6)
-no_p:
-		tst.w	argc(a6)
+		subq.l	#1,d2
 		beq	parse_arg_done
-
+no_p:
 		bsr	strlen
-		cmp.l	#MAXLOGNAME,d0
-		bhi	set_logname_done
-
-		movea.l	a0,a1
-		lea	logname+2(a6),a0
-		bsr	strcpy
-		movea.l	a1,a0
-set_logname_done:
+		move.l	#MAXLOGNAME,d1
+		bsr	minmaxul
+		exg	a0,a1
+		lea	logname(a6),a0
+		bsr	memmovi
+		clr.b	(a0)
+		exg	a0,a1
 		bsr	strfor1
-		subq.w	#1,argc(a6)
+		subq.l	#1,d2
 parse_arg_done:
 	*
-	*  残りの引数をスタックの直後に保存する
+	*  残りの引数をだけを残して確保メモリを切り詰める
 	*
+		move.l	d2,argc(a6)
 		movea.l	a0,a1
-		lea	envarg_top(a6),a0
-		move.w	argc(a6),d7
+		movea.l	args(a6),a0
 		bra	move_envarg_continue
 
 move_envarg_loop:
 		bsr	strmove
 move_envarg_continue:
-		dbra	d7,move_envarg_loop
-	*
-	*  占有メモリを切り詰める
-	*
-		DOS	_GETPDB
-		movea.l	d0,a1				*  A1 : PDBアドレス
+		subq.l	#1,d1
+		bcc	move_envarg_loop
+
 		move.l	a0,d0
-		sub.l	a1,d0
+		move.l	args(a6),a0
+		sub.l	a0,d0
 		move.l	d0,-(a7)
-		move.l	a1,-(a7)
+		move.l	a0,-(a7)
 		DOS	_SETBLOCK
 		addq.l	#8,a7
 	*
-	*  親プロセスが無いならばシグナル処理ルーチンを設定する
+	*  シグナル処理ルーチンを設定する
 	*
-		tst.l	PDB_ProcessFlag(a1)		*  0:親有り  -1:OSから起動
-		beq	test_logname
-
-		st	in_login(a6)
-		pea	manage_signals(pc)
+		st	in_me
+		lea	leave(pc),a0
+		move.l	a0,mainjmp
+		lea	exec_stack_bottom(pc),a0
+		move.l	a0,mainstack
+		pea	manage_interrupt_signal(pc)
 		move.w	#_CTRLVC,-(a7)
 		DOS	_INTVCS
 		addq.l	#6,a7
-		pea	manage_signals(pc)
+		pea	manage_abort_signal(pc)
 		move.w	#_ERRJVC,-(a7)
 		DOS	_INTVCS
 		addq.l	#6,a7
-		bra	test_logname
-	**
-	**  メイン・ループ
-	**
-main_loop:
-		move.l	user_envp(a6),d0
-		beq	free_envp_ok
+	*
+	*  開始
+	*
+		clr.b	failures(a6)
+		bra	check_logname
 
-		move.l	d0,-(a7)
-		DOS	_MFREE
-		addq.l	#4,a7
-		clr.l	user_envp(a6)
-free_envp_ok:
-		lea	login_cwd(a6),a0
-		bsr	chdir
 ask_logname:
-		*
-		*  ログイン名を入力する
-		*
-		pea	msg_login(pc)
-		DOS	_PRINT
-		addq.l	#4,a7
+	*
+	*  ログイン名を入力する
+	*
+		lea	msg_login(pc),a1
 		lea	logname(a6),a0
-		move.b	#MAXLOGNAME,(a0)
-		clr.b	1(a0)
-		move.l	a0,-(a7)
-		DOS	_GETS
-		addq.l	#4,a7
-		bsr	put_newline
-		lea	logname+1(a6),a0
-		moveq	#0,d0
-		move.b	(a0)+,d0
-		clr.b	(a0,d0.l)
-test_logname:
-		lea	logname+2(a6),a0
-		bsr	skip_space
-		tst.b	(a0)
-		beq	ask_logname
-
-		move.l	a0,logname_top(a6)
-		sf	incorrect(a6)
+		moveq	#8,d0
+		bsr	getname
+		bmi	leave_0
+check_logname:
 	*
 	*  ログイン名をチェックする
 	*
-		moveq	#0,d1
-		move.b	(a0)+,d0
-		bra	check_logname_first
+		lea	logname(a6),a0
+		move.b	(a0),d0
+		beq	ask_logname
 
-check_logname_loop:
-		bsr	isdigit
-		beq	check_logname_continue
-check_logname_first:
-		bsr	islower
-		bne	login_invalid
-check_logname_continue:
-		addq.l	#1,d1
-		cmp.l	#PW_NAME_SIZE,d1
-		bhi	login_invalid
+		cmp.b	#'-',d0
+		bne	logname_ok
 
-		move.b	(a0)+,d0
-		beq	check_logname_done
+		lea	msg_minus_logname(pc),a0
+		bsr	werror
+		bra	ask_logname
 
-		bsr	isspace
-		bne	check_logname_loop
-
-		clr.b	-1(a0)
-		bsr	skip_space
-		tst.b	(a0)
-		bne	login_invalid
-check_logname_done:
+logname_ok:
 	*
 	*  パスワード・ファイルを参照する
 	*
-		lea	file_passwd(pc),a1		*  パスワード・ファイルを
+		lea	file_passwd(pc),a2		*  パスワード・ファイルを
 		bsr	open_sysfile			*  オープンする
-		bmi	login_invalid
+		bmi	nonexistent_name
 
 		lea	pwd_buf(a6),a0
-		movea.l	logname_top(a6),a1
-		bsr	fgetpwnam
+		lea	pwd_line(a6),a1
+		move.l	#PW_LINESIZE,d1
+		lea	logname(a6),a2
+		bsr	fgetpwnam			*  エントリを得る
 		bsr	xfclose
 		tst.l	d0
-		bne	login_invalid
+		bne	nonexistent_name
 
-		lea	pwd_buf+PW_PASSWD(a6),a0
-		tst.b	(a0)
-		beq	do_login
+		movea.l	pwd_buf+PW_PASSWD(a6),a0
+		tst.b	(a0)				*  パスワードが設定されていなければ
+		beq	login_correct			*  ログインを許可する
+
+		cmpi.b	#',',(a0)
+		beq	login_correct
 
 		bra	ask_passwd
 
-login_invalid:
-		st	incorrect(a6)
+nonexistent_name:
+		lea	salt_xx(pc),a0
+		move.l	a0,pwd_buf+PW_PASSWD(a6)
 ask_passwd:
 	*
 	*  パスワードを尋ねて照合する
@@ -256,45 +398,64 @@ ask_passwd:
 		lea	password(a6),a0
 		move.l	#MAXPASSWD,d0
 		bsr	getpass
-		clr.b	(a0,d0.l)
+		movea.l	pwd_buf+PW_PASSWD(a6),a1
+		lea	crypt_buf(a6),a2
+		bsr	crypt
+		bsr	strlen
+		move.l	d0,d1
+		moveq	#0,d0
+		bsr	memset
 		bsr	put_newline
-		tst.b	incorrect(a6)
-		bne	login_incorrect
+		movea.l	a2,a0
+		moveq	#13,d0
+		bsr	memcmp
+		beq	login_correct
+	**
+	**  ログイン拒否
+	**
+login_incorrect:
+		lea	msg_login_incorrect(pc),a0
+		bsr	print
+		addq.b	#1,failures(a6)
+		cmpi.b	#5,failures(a6)
+		blo	ask_logname
 
-		lea	pwd_buf+PW_PASSWD(a6),a1
-		bsr	strcmp
-		bne	login_incorrect
+		lea	msg_repeated_login_failures(pc),a0
+		bsr	werror
+		moveq	#1,d0
+		bra	sleep_exit
+	**
+	**  ログイン認可
+	**
+login_correct:
+		tst.l	pwd_buf+PW_UID(a6)		*  uid=0 なら
+		beq	do_login			*  無条件にログインする
+
+		bsr	check_nologin
 do_login:
 	*
-	*  ユーザのディレクトリに chdir する
+	*  ユーザのディレクトリを決定して chdir する
 	*
-		lea	pwd_buf+PW_DIR(a6),a0
-		tst.b	(a0)
-		beq	check_dir_1
+		movea.l	pwd_buf+PW_DIR(a6),a0
+		bsr	drvchkp
+		bmi	no_dir
 
-		cmpi.b	#':',1(a0)
-		bne	check_dir_1
-
-		tst.b	2(a0)
-		bne	check_dir_1
-
-		lea	msg_incomplete_directory(pc),a1
-		bsr	werror2
-		bra	main_loop
-
-check_dir_1:
 		bsr	chdir
 		bpl	chdir_ok
-
+no_dir:
 		lea	msg_unable_to_change_directory(pc),a1
-		bsr	werror2
-		bra	main_loop
-
+		bsr	print2
+		lea	msg_subst_home(pc),a0
+		bsr	print
+		lea	defaultdir(a6),a0		*  現在いるディレクトリ（chdir $SYSROOT した結果）を
+		move.l	a0,pwd_buf+PW_DIR(a6)		*  ユーザのホーム・ディレクトリとする
+		bsr	print
+		bsr	put_newline
 chdir_ok:
 	*
 	*  ユーザのシェルとパラメータを決定する
 	*
-		lea	pwd_buf+PW_SHELL(a6),a0
+		movea.l	pwd_buf+PW_SHELL(a6),a0
 		tst.b	(a0)
 		beq	make_default_shell
 
@@ -305,7 +466,7 @@ chdir_ok:
 		cmp.l	#MAXPATH,d0
 		bhi	too_long_shell
 
-		lea	shell_pathname(a6),a0
+		lea	shell_pathname(pc),a0
 		bsr	memmovi
 		clr.b	(a0)
 		movea.l	a1,a0
@@ -313,42 +474,41 @@ chdir_ok:
 		bra	shell_ok
 
 make_default_shell:
-		lea	default_shell(pc),a1
-		lea	shell_pathname(a6),a0
+		lea	shell_pathname(pc),a0
+		lea	default_shell(pc),a2
 		bsr	make_sys_pathname
 		bmi	too_long_shell
 
 		lea	default_parameter(pc),a0
 shell_ok:
 		bsr	strlen
-		cmp.l	#255,d0
+		cmp.l	#252,d0
 		bhi	too_long_parameter
 
 		movea.l	a0,a1
-		lea	parameter(a6),a0
+		lea	parameter(pc),a0
 		move.b	d0,(a0)+
+		bsr	strmove
+		lea	shell_arg0(pc),a1
 		bsr	strcpy
 	*
 	*  ユーザの環境を作成する
 	*
-		*
-		*  ユーザの環境のために最大ブロックを確保する
-		*
 		move.l	#$00ffffff,-(a7)
 		DOS	_MALLOC
 		addq.l	#4,a7
 		sub.l	#$81000000,d0
 		move.l	d0,d1				*  D1.L : 確保可能な大きさ
 		cmp.l	#5,d1
-		blo	insufficient_memory_for_shell
+		blo	insufficient_memory
 
 		move.l	d0,-(a7)
 		DOS	_MALLOC
 		addq.l	#4,a7
 		tst.l	d0
-		bmi	insufficient_memory_for_shell
+		bmi	insufficient_memory
 
-		move.l	d0,user_envp(a6)
+		move.l	d0,user_envp
 		movea.l	d0,a3				*  A3 : ユーザの環境
 		movea.l	a3,a2
 		move.l	d1,(a2)+
@@ -391,7 +551,7 @@ do_dupenv:
 		bsr	strlen
 		addq.l	#1,d0
 		sub.l	d0,d1
-		bcs	insufficient_memory_for_shell
+		bcs	insufficient_memory
 
 		movea.l	a0,a1
 		movea.l	a2,a0
@@ -409,29 +569,29 @@ dupenv_done:
 		*
 		*  LOGNAME, USER, HOME, SHELL をセットする
 		*
-		lea	pwd_buf+PW_NAME(a6),a1
+		movea.l	pwd_buf+PW_NAME(a6),a1
 		lea	word_LOGNAME(pc),a0
 		bsr	setenv
-		bne	insufficient_memory_for_shell
+		bne	insufficient_memory
 		*
 		lea	word_USER(pc),a0
 		bsr	setenv
-		bne	insufficient_memory_for_shell
+		bne	insufficient_memory
 		*
-		lea	pwd_buf+PW_DIR(a6),a1
+		movea.l	pwd_buf+PW_DIR(a6),a1
 		lea	word_HOME(pc),a0
-		bsr	setenv_path
-		bne	insufficient_memory_for_shell
+		bsr	setenv
+		bne	insufficient_memory
 		*
-		lea	shell_pathname(a6),a1
+		lea	shell_pathname(pc),a1
 		lea	word_SHELL(pc),a0
-		bsr	setenv_path
-		bne	insufficient_memory_for_shell
+		bsr	setenv
+		bne	insufficient_memory
 		*
 		*  引数からセットする
 		*
-		lea	envarg_top(a6),a0
-		move.w	argc(a6),d7
+		movea.l	args(a6),a0
+		move.l	argc(a6),d7
 		moveq	#0,d1
 		bra	setargenv_continue
 
@@ -459,11 +619,18 @@ setargenv_l:
 		movea.l	a1,a0
 setargenv_doneone:
 		tst.l	d0
-		bne	insufficient_memory_for_shell
+		bne	insufficient_memory
 
 		bsr	strfor1
 setargenv_continue:
-		dbra	d7,setargenv_loop
+		subq.l	#1,d7
+		bcc	setargenv_loop
+		*
+		*  保存しておいていた引数を解放する
+		*
+		move.l	args(a6),-(a7)
+		DOS	_MFREE
+		addq.l	#4,a7
 		*
 		*  ユーザの環境を切り詰める
 		*
@@ -479,21 +646,17 @@ setargenv_continue:
 		DOS	_SETBLOCK
 		addq.l	#8,a7
 	*
-	*  $HOME/%hushlogin をチェックする
+	*  $HOME/[.%]hushlogin が無ければ $SYSROOT/etc/motd を出力する
 	*
-		link	a5,#-54
-		move.w	#$37,-(a7)			*  ボリューム・ラベル以外すべて
-		pea	file_hushlogin(pc)
-		pea	-54(a5)
-		DOS	_FILES
-		lea	10(a7),a7
-		unlk	a5
-		tst.l	d0
+		lea	dot_hushlogin(pc),a0
+		bsr	statf
 		bpl	motd_done
-	*
-	*  A:/etc/motd を出力する
-	*
-		lea	file_motd(pc),a1		*  motd ファイルを
+
+		lea	percent_hushlogin(pc),a0
+		bsr	statf
+		bpl	motd_done
+
+		lea	file_motd(pc),a2		*  motd ファイルを
 		bsr	open_sysfile			*  オープンしてみる
 		bmi	motd_done
 
@@ -502,113 +665,65 @@ motd_done:
 	*
 	*  ユーザのシェルをexecする
 	*
-		clr.w	child_signal(a6)
-		sf	in_login(a6)
-		move.l	user_envp(a6),-(a7)		*  ユーザの環境のアドレス
-		pea	parameter(a6)			*  起動するプログラムへの引数のアドレス
-		pea	shell_pathname(a6)		*  起動するプログラムのパス名のアドレス
-		move.w	#1,-(a7)			*  ファンクション：LOAD
-		DOS	_EXEC
-		lea	14(a7),a7
+		lea	shell_pathname(pc),a0
+		bsr	drvchkp
+		bmi	unable_exec
 
-		lea	bsstop(pc),a6
-		tst.w	child_signal(a6)
-		bne	shell_done
-
-		tst.l	d0
-		bmi	shell_done
-
-		move.l	a4,-(a7)			*  エントリ・アドレス
-		move.w	#4,-(a7)			*  ファンクション：EXEC
-		DOS	_EXEC
-		addq.l	#6,a7
-shell_done:
-		lea	bsstop(pc),a6
-		st	in_login(a6)
-
-		tst.l	d0
-		bpl	main_loop
-
-		lea	shell_pathname(a6),a0
-		lea	msg_unable_to_execute(pc),a1
-		bsr	werror2
-		bra	main_loop
+		lea	exec_stack_bottom(pc),a7
+		move.l	user_envp(pc),-(a7)		*  ユーザの環境のアドレス
+		pea	parameter(pc)			*  起動するプログラムへの引数のアドレス
+		move.l	a0,-(a7)			*  起動するプログラムのパス名のアドレス
+		clr.w	-(a7)				*  ファンクション：LOAD&EXEC
+		bra	exec
 
 
 too_long_shell:
 		lea	msg_too_long_shell(pc),a0
-werror_loop:
-		bsr	werror
-		bra	main_loop
-
+		bra	werror_leave_0
 
 too_long_parameter:
 		lea	msg_too_long_parameter(pc),a0
-		bra	werror_loop
+werror_leave_0:
+		bsr	werror
+		bra	leave_0
 
+invalid_sysroot:
+		lea	msg_invalid_sysroot(pc),a1
+		bsr	werror2
+		bra	leave_1
 
-login_incorrect:
-		lea	msg_login_incorrect(pc),a0
-		bra	werror_loop
-
-
-insufficient_memory_for_shell:
+insufficient_memory:
 		lea	msg_insufficient_memory(pc),a0
-		bra	werror_loop
-*****************************************************************
-manage_signals:
-		lea	bsstop(pc),a6
-		lea	stack_bottom(a6),a7
-		bsr	xfclose
-		tst.b	in_login(a6)
-		bne	main_loop
-
+werror_leave_1:
+		bsr	werror
+leave_1:
 		moveq	#1,d0
-		move.w	d0,child_signal(a6)
-		move.w	d0,-(a7)
-		DOS	_EXIT2
+		bra	leave
 *****************************************************************
-nologin:
-		bsr	print_file
-		lea	msg_nologin(pc),a0
-werror_exit:
-		bsr	werror
-		move.w	#1,-(a7)
-		DOS	_EXIT2
-*****************************************************************
-not_a_tty:
-		lea	msg_not_a_tty(pc),a0
-		bra	werror_exit
-*****************************************************************
-insufficient_memory_for_me:
-		lea	msg_insufficient_memory(pc),a0
-		bra	werror_exit
-*****************************************************************
-werror2:
-		move.l	a0,-(a7)
-		movea.l	a1,a0
-		bsr	werror
-		lea	msg_space_quote(pc),a0
-		bsr	werror
-		move.l	(a7)+,a0
-		bsr	werror
-		lea	msg_quote_crlf(pc),a0
-werror:
-		movea.l	a0,a1
-werror_1:
-		tst.b	(a1)+
-		bne	werror_1
+check_nologin:
+		lea	file_nologin(pc),a2
+		bsr	open_sysfile
+		bmi	check_nologin_return
 
-		suba.l	a0,a1
-		move.l	a1,-(a7)
-		move.l	a0,-(a7)
-		move.w	#2,-(a7)
-		DOS	_WRITE
-		lea	10(a7),a7
+		bsr	print_file
+		moveq	#0,d0
+sleep_exit:
+		move.l	d0,-(a7)
+		move.l	#500,d0
+		bsr	csleep
+		move.l	(a7)+,d0
+		bra	leave
+
+check_nologin_return:
 		rts
 *****************************************************************
 print_file:
-		move.l	d0,-(a7)
+		movem.l	d0/a0/a6,-(a7)
+		move.l	mainjmp,-(a7)
+		move.l	mainstack,-(a7)
+		lea	print_file_done(pc),a0
+		move.l	a0,mainjmp
+		move.l	a7,mainstack
 print_file_loop:
 		move.w	file_handle(a6),d0
 		bsr	fgetc
@@ -625,22 +740,120 @@ print_file_1char:
 		bra	print_file_loop
 
 print_file_done:
-		move.l	(a7)+,d0
+		move.l	(a7)+,mainstack
+		move.l	(a7)+,mainjmp
+		movem.l	(a7)+,d0/a0/a6
 xfclose:
 		move.l	d0,-(a7)
 		move.w	file_handle(a6),d0
-		bmi	xfclose_done
-
 		bsr	fclose
-		move.w	#-1,file_handle(a6)
-xfclose_done:
 		move.l	(a7)+,d0
+		rts
+****************************************************************
+* getname - 標準入力からエコー付きで1行入力する（CRまたはLFまで）
+*
+* CALL
+*      A0     入力バッファ
+*      A1     プロンプト文字列
+*      D0.L   最大入力バイト数（CRやLFは含まない）
+*
+* RETURN
+*      D0.L   入力文字数（CRやLFは含まない）
+*             ただし EOF なら -1
+*      CCR    TST.L D0
+****************************************************************
+getname:
+		movem.l	d1-d2/a0-a2,-(a7)
+		move.l	d0,d2
+getname_restart:
+		exg	a0,a1
+		bsr	print
+		exg	a0,a1
+		moveq	#0,d1
+		movea.l	a0,a2
+getname_loop:
+		DOS	_INKEY
+		tst.l	d0
+		bmi	getname_eof
+
+		cmp.b	#EOT,d0
+		beq	getname_eof
+
+		cmp.b	#$04,d0				*  $04 == ^D : EOF
+		beq	getname_eof
+
+		cmp.b	#CR,d0
+		beq	getname_done
+
+		cmp.b	#LF,d0
+		beq	getname_done
+
+		move.w	d0,-(a7)
+		move.w	d0,-(a7)
+		bsr	iscntrl
+		bne	getname_echo
+
+		add.b	#$40,d0
+		and.b	#$7f,d0
+		move.w	d0,(a7)
+		moveq	#'^',d0
+		bsr	putchar
+getname_echo:
+		move.w	(a7)+,d0
+		bsr	putchar
+		move.w	(a7)+,d0
+
+		cmp.b	#$03,d0				*  $03 == ^C : Interrupt
+		beq	getname_cancel
+
+		cmp.b	#$15,d0				*  $15 == ^U : Kill
+		beq	getname_cancel
+
+		cmp.l	d2,d1
+		bhs	getname_loop
+
+		move.b	d0,(a2)+
+		addq.l	#1,d1
+		bra	getname_loop
+
+getname_cancel:
+		bsr	put_newline
+		bra	getname_restart
+
+getname_eof:
+		moveq	#-1,d0
+		bra	getname_return
+
+getname_done:
+		bsr	put_newline
+		clr.b	(a2)
+		move.l	d1,d0
+getname_return:
+		movem.l	(a7)+,d1-d2/a0-a2
 		rts
 *****************************************************************
 put_newline:
-		moveq	#CR,d0
-		bsr	putchar
-		moveq	#LF,d0
+		move.l	a0,-(a7)
+		lea	str_newline(pc),a0
+		bsr	print
+		movea.l	(a7)+,a0
+		rts
+*****************************************************************
+print2:
+		move.l	a0,-(a7)
+		movea.l	a1,a0
+		bsr	print
+		lea	msg_space_quote(pc),a0
+		bsr	print
+		move.l	(a7)+,a0
+		bsr	print
+		lea	msg_quote_crlf(pc),a0
+print:
+		move.l	a0,-(a7)
+		DOS	_PRINT
+		addq.l	#4,a7
+		rts
+*****************************************************************
 putchar:
 		move.w	d0,-(a7)
 		DOS	_PUTCHAR
@@ -648,55 +861,34 @@ putchar:
 		rts
 *****************************************************************
 make_sys_pathname:
-		movem.l	d0/a0-a4,-(a7)
-		movea.l	a0,a4
-		movea.l	a1,a2
-		movea.l	login_envp(a6),a3
-		cmpa.l	#-1,a3
-		beq	make_sys_pathname_sysroot_null
-
-		lea	word_SYSROOT(pc),a0
-		bsr	getenv
-		bne	make_sys_pathname_cat
-make_sys_pathname_sysroot_null:
-		lea	str_nul,a0
-		move.l	a0,d0
-make_sys_pathname_cat:
-		movea.l	d0,a1
-		movea.l	a4,a0
-		bsr	cat_pathname
-make_sys_pathname_return:
-		movem.l	(a7)+,d0/a0-a4
-return:
-		rts
+		movea.l	sysroot(a6),a1
+		bra	cat_pathname
 *****************************************************************
 open_sysfile:
 		lea	pathname_buf(a6),a0
 		bsr	make_sys_pathname
-		bmi	return
+		bmi	open_file_return
 
 		moveq	#0,d0				*  読み込みモードで
 		bsr	tfopen				*  オープンする
-		bmi	open_sysfile_return
+		bmi	open_file_return
 
 		move.w	d0,file_handle(a6)
-open_sysfile_return:
+open_file_return:
 		rts
 *****************************************************************
-setenv_path:
-		lea	pathname_buf(a6),a2
-slash_to_backslash_loop:
-		move.b	(a1)+,d0
-		cmp.b	#'/',d0
-		bne	slash_to_backslash_1
+statf:
+		bsr	drvchkp
+		bmi	statf_return
 
-		moveq	#'\',d0
-slash_to_backslash_1:
-		move.b	d0,(a2)+
-		bne	slash_to_backslash_loop
-
-		lea	pathname_buf(a6),a1
-		bra	setenv
+		move.w	#$37,-(a7)			*  ボリューム・ラベル以外すべて
+		move.l	a0,-(a7)
+		pea	statbuf(a6)
+		DOS	_FILES
+		lea	10(a7),a7
+		tst.l	d0
+statf_return:
+		rts
 *****************************************************************
 envcmp:
 		move.l	d1,-(a7)
@@ -717,36 +909,37 @@ envcmp_return:
 .data
 
 	dc.b	0
-	dc.b	'## login 0.3 ##  Copyright(C)1991 by Itagaki Fumihiko',0
+	dc.b	'## login 0.4 ##  Copyright(C)1991 by Itagaki Fumihiko',0
 
 word_HOME:			dc.b	'HOME',0
 word_LOGNAME:			dc.b	'LOGNAME',0
 word_SHELL:			dc.b	'SHELL',0
 word_USER:			dc.b	'USER',0
 word_SYSROOT:			dc.b	'SYSROOT',0
+msg_invalid_sysroot:		dc.b	'login: Invalid $SYSROOT directory',CR,LF,0
+msg_not_a_tty:			dc.b	'login: Input is not character device.',CR,LF,0
+msg_insufficient_memory:	dc.b	'login: Insufficient memory.',CR,LF,0
 msg_login:			dc.b	'login: ',0
 msg_password:			dc.b	'Password:',0
-msg_login_incorrect:		dc.b	'Login incorrect',CR,LF,0
-msg_nologin:			dc.b	'Login disabled.',CR,LF,0
-msg_not_a_tty:			dc.b	'Not a cooked character device.',CR,LF,0
-msg_incomplete_directory:	dc.b	'Incomplete directory',0
+msg_minus_logname:		dc.b	"login names may not start with '-'.",CR,LF,0
+msg_login_incorrect:		dc.b	'Login incorrect'
+str_newline:			dc.b	CR,LF,0
+msg_repeated_login_failures:	dc.b	'REPEATED LOGIN FAILURES',CR,LF,0
 msg_unable_to_change_directory:	dc.b	'Unable to change directory to',0
-msg_unable_to_execute:		dc.b	'Unable to execute',0
+msg_subst_home:			dc.b	'Logging in with home=',0
 msg_too_long_shell:		dc.b	'Too long shell pathname',CR,LF,0
 msg_too_long_parameter:		dc.b	'Too long shell parameter',CR,LF,0
-msg_insufficient_memory:	dc.b	'Insufficient memory',CR,LF,0
-msg_space_quote:		dc.b	' "',0
-msg_quote_crlf:			dc.b	'"'
-msg_crlf:			dc.b	CR,LF,0
 
 file_passwd:			dc.b	'/etc/passwd',0
 file_nologin:			dc.b	'/etc/nologin',0
 file_motd:			dc.b	'/etc/motd',0
 default_shell:			dc.b	'/bin/COMMAND.X',0
-file_hushlogin:			dc.b	'%hushlogin',0
+dot_hushlogin:			dc.b	'.hushlogin',0
+percent_hushlogin:		dc.b	'%hushlogin',0
 
+salt_xx:			dc.b	'xx',0
 str_p:				dc.b	'-p',0
-
+shell_arg0:			dc.b	'-'
 default_parameter:
 str_nul:			dc.b	0
 *****************************************************************
@@ -754,29 +947,26 @@ str_nul:			dc.b	0
 .even
 bsstop:
 .offset 0
-
+sysroot:	ds.l	1
 login_envp:	ds.l	1
-user_envp:	ds.l	1
-logname_top:	ds.l	1
-argc:		ds.w	1
+args:		ds.l	1
+argc:		ds.l	1
 file_handle:	ds.w	1
-child_signal:	ds.w	1
 pwd_buf:	ds.b	PW_SIZE
-logname:	ds.b	2+MAXLOGNAME+1
-password:	ds.b	MAXPASSWD+1
-shell_pathname:	ds.b	MAXPATH+1
-parameter:	ds.b	1+255+1
-login_cwd:	ds.b	MAXPATH+1
-pathname_buf:	ds.b	MAXPATH+1
+pwd_line:	ds.b	PW_LINESIZE
+statbuf:	ds.b	53
 lbuf:		ds.b	12
-in_login:	ds.b	1
-incorrect:	ds.b	1
+crypt_buf:	ds.b	16
+failures:	ds.b	1
+defaultdir:	ds.b	MAXHEAD+1
+logname:	ds.b	MAXLOGNAME+1
+password:	ds.b	MAXPASSWD+1
+pathname_buf:	ds.b	MAXPATH+1
 protect_env:	ds.b	1
-
+.even
 		ds.b	STACKSIZE
 .even
 stack_bottom:
-envarg_top:
+initial_bottom:
 *****************************************************************
 .end start
-
